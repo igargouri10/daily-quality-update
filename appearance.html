@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Appearance Score Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    :root {
+      --ink:#172b3a; --muted:#647883; --line:#dfe7eb; --surface:#fff;
+      --bg:#f4f7f8; --accent:#176b45; --t1:#1b5e20; --t2:#66bb6a;
+      --t3:#f9a825; --t4:#e65100;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 Inter,Segoe UI,Arial,sans-serif; }
+    header { background:linear-gradient(120deg,#123c30,#176b45); color:#fff; padding:32px max(24px,calc((100vw - 1480px)/2)); }
+    h1 { margin:0 0 7px; font-size:clamp(25px,3vw,38px); letter-spacing:-.03em; }
+    header p { margin:0; color:#d8eee5; }
+    main { max-width:1480px; margin:0 auto; padding:24px; }
+    .panel,.card { background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:0 5px 18px rgba(23,43,58,.06); }
+    .panel { padding:20px; margin-bottom:20px; }
+    .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .file-label,.button { border:0; border-radius:9px; padding:11px 16px; font-weight:700; cursor:pointer; }
+    .file-label { background:var(--accent); color:#fff; }
+    .file-label:hover { filter:brightness(.95); }
+    input[type=file] { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
+    select { min-width:230px; padding:10px 12px; border:1px solid #cbd7dc; border-radius:9px; background:#fff; color:var(--ink); }
+    .button { background:#e9f2ee; color:#15583b; }
+    .button:disabled { opacity:.45; cursor:not-allowed; }
+    #status { margin:13px 0 0; color:var(--muted); }
+    .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:12px; margin-top:18px; }
+    .metric { padding:13px 14px; border:1px solid var(--line); border-radius:10px; background:#fbfcfc; }
+    .metric b { display:block; font-size:22px; color:var(--ink); }
+    .metric span { color:var(--muted); font-size:12px; }
+    .warning { color:#9b4700!important; }
+    .charts { display:grid; gap:20px; }
+    .card { overflow:hidden; }
+    .card-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding:19px 20px 13px; border-bottom:1px solid var(--line); }
+    .card h2 { margin:0 0 4px; font-size:21px; }
+    .subtitle { margin:0; color:var(--muted); }
+    .site-summary { margin:10px 0 0; color:#334851; font-size:13px; line-height:1.5; max-width:980px; }
+    .site-summary span { display:block; }
+    .download { background:#edf4f1; color:#15583b; border:0; border-radius:8px; padding:8px 11px; font-weight:700; cursor:pointer; white-space:nowrap; }
+    .download.primary { background:#176b45; color:#fff; }
+    .download:disabled { opacity:.55; cursor:wait; }
+    .download-group { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .scroll { overflow-x:auto; padding:14px 16px 8px; }
+    .canvas-wrap { height:440px; min-width:900px; }
+    .empty { padding:60px 20px; text-align:center; color:var(--muted); }
+    .audit { margin-top:20px; padding:20px; }
+    .audit h2 { margin:0 0 12px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { text-align:right; padding:10px 12px; border-bottom:1px solid var(--line); }
+    th:first-child,td:first-child { text-align:left; }
+    th { color:#4e636e; background:#f7f9fa; }
+    [hidden] { display:none!important; }
+    @media (max-width:650px) { main{padding:14px}.card-head{flex-direction:column}.canvas-wrap{height:390px} }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Appearance Score Distribution</h1>
+    <p>Average ASAVG by scheduled delivery date, plant, and batch • Dashboard v3</p>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="controls">
+        <label class="file-label" for="excelFile">Choose Excel file</label>
+        <input id="excelFile" type="file" accept=".xlsx,.xls,.xlsm">
+        <select id="siteFilter" aria-label="Filter supplier site" disabled><option>All supplier sites</option></select>
+        <button class="button" id="csvButton" disabled>Download audit CSV</button>
+      </div>
+      <p id="status">Choose the QC workbook to generate the charts. Processing stays in your browser.</p>
+      <div id="metrics" class="metrics" hidden></div>
+    </section>
+    <section id="charts" class="charts"><div class="panel empty">No workbook loaded.</div></section>
+    <section id="audit" class="panel audit" hidden>
+      <h2>Aggregation audit</h2>
+      <table>
+        <thead><tr><th>Supplier Site</th><th>Valid rows</th><th>Batch groups</th><th>Overall ASAVG</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const BAR_COLOR = '#35bdf2';
+    const charts = new Map();
+    let state = null;
+
+    const $ = id => document.getElementById(id);
+    const norm = value => String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]+/g,'');
+    const clean = value => String(value ?? '').trim();
+    const isBlankValue = value => {
+      if (value === null || value === undefined) return true;
+      const text = clean(value);
+      return text === '' || /^\(?blank\)?$/i.test(text);
+    };
+    const isUnavailableAxisValue = value => {
+      if (isBlankValue(value)) return true;
+      return /^(?:variety|batch|plant|date)\s+unavailable$/i.test(clean(value));
+    };
+    const escapeHtml = value => clean(value).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+    function findColumn(headers, aliases) {
+      const wanted = aliases.map(norm);
+      const index = headers.findIndex(h => wanted.includes(norm(h)));
+      return index;
+    }
+
+    function formatDate(value) {
+      if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+        return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric'}).format(value);
+      }
+      const raw = clean(value);
+      const digits = raw.replace(/\D/g,'');
+      if (digits.length === 8) {
+        const y=+digits.slice(0,4), m=+digits.slice(4,6), d=+digits.slice(6,8);
+        const date = new Date(Date.UTC(y,m-1,d));
+        if (date.getUTCFullYear()===y && date.getUTCMonth()===m-1 && date.getUTCDate()===d) {
+          return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(date);
+        }
+      }
+      return raw || 'Date unavailable';
+    }
+
+    function dateSortValue(value) {
+      const digits = clean(value).replace(/\D/g,'');
+      if (digits.length===8) return Number(digits);
+      if (value instanceof Date) return value.valueOf();
+      return Number.MAX_SAFE_INTEGER;
+    }
+
+    function chooseSourceSheet(workbook) {
+      for (const name of workbook.SheetNames) {
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], {header:1,defval:null,raw:true});
+        if (!rows.length) continue;
+        const headers = rows[0];
+        const hasSite = findColumn(headers,['Supplier Site','SUPPLIER_SITE']) >= 0;
+        const hasAsavg = findColumn(headers,['ASAVG','Appearance Score','APPEARANCE_SCORE']) >= 0;
+        if (hasSite && hasAsavg) return {name,rows};
+      }
+      throw new Error('No worksheet contains both Supplier Site and ASAVG columns.');
+    }
+
+    function aggregate(rows) {
+      const headers = rows[0];
+      const col = {
+        site: findColumn(headers,['Supplier Site','SUPPLIER_SITE']),
+        asavg: findColumn(headers,['ASAVG','Appearance Score','APPEARANCE_SCORE']),
+        date: findColumn(headers,['SCHEDULED_DELIVERY_DATE','Scheduled Delivery Date']),
+        plant: findColumn(headers,['PLANT NAME','PLANT_NAME']),
+        batch: findColumn(headers,['Batch','BATCH'])
+      };
+      const missing = Object.entries(col).filter(([,i])=>i<0).map(([name])=>name);
+      if (missing.length) throw new Error('Required columns missing: '+missing.join(', '));
+
+      const sites = new Map();
+      const diagnostics = {sourceRows:rows.length-1,valid:0,invalidScore:0,blankSite:0,blankAxis:0};
+      for (const row of rows.slice(1)) {
+        const siteValue = row[col.site];
+        if (isBlankValue(siteValue)) { diagnostics.blankSite++; continue; }
+
+        const scoreValue = row[col.asavg];
+        if (isBlankValue(scoreValue)) { diagnostics.invalidScore++; continue; }
+        const score = Number(scoreValue);
+        if (!Number.isFinite(score)) { diagnostics.invalidScore++; continue; }
+
+        const rawDate = row[col.date];
+        const plantValue = row[col.plant];
+        const batchValue = row[col.batch];
+        if ([rawDate,plantValue,batchValue].some(isUnavailableAxisValue)) {
+          diagnostics.blankAxis++;
+          continue;
+        }
+
+        const site = clean(siteValue);
+        const plant = clean(plantValue);
+        const batch = clean(batchValue);
+        const label = [formatDate(rawDate),plant,batch];
+        const key = [clean(rawDate),plant,batch].join('\u001f');
+        if (!sites.has(site)) sites.set(site,new Map());
+        const groups = sites.get(site);
+        if (!groups.has(key)) groups.set(key,{label,rawDate,plant,batch,sum:0,count:0});
+        groups.get(key).sum += score;
+        groups.get(key).count++;
+        diagnostics.valid++;
+      }
+      const result = new Map();
+      [...sites.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true})).forEach(([site,groups])=>{
+        result.set(site,[...groups.values()].sort((a,b)=>
+          dateSortValue(a.rawDate)-dateSortValue(b.rawDate) ||
+          a.plant.localeCompare(b.plant,undefined,{numeric:true}) ||
+          a.batch.localeCompare(b.batch,undefined,{numeric:true})
+        ));
+      });
+      return {sites:result,diagnostics};
+    }
+
+    function buildSiteSummaries(rows) {
+      const headers=rows[0];
+      const col={site:findColumn(headers,['Supplier Site','SUPPLIER_SITE']),tier:findColumn(headers,['TIER','Tier Score','TIER_SCORE']),asavg:findColumn(headers,['ASAVG','Appearance Score','APPEARANCE_SCORE']),date:findColumn(headers,['SCHEDULED_DELIVERY_DATE','Scheduled Delivery Date']),plant:findColumn(headers,['PLANT NAME','PLANT_NAME']),variety:findColumn(headers,['VARIETY']),batch:findColumn(headers,['Batch','BATCH'])};
+      if(Object.values(col).some(i=>i<0)) return new Map();
+      const summaries=new Map();
+      for(const row of rows.slice(1)) {
+        if(isBlankValue(row[col.site])) continue;
+        const site=clean(row[col.site]);
+        if(!summaries.has(site)) summaries.set(site,{tiers:[0,0,0,0],appearance:{sum:0,count:0,min:Infinity,max:-Infinity}});
+        const s=summaries.get(site);
+        const tier=Number(row[col.tier]);
+        if(Number.isInteger(tier)&&[1,2,3,4].includes(tier)&&![row[col.date],row[col.plant],row[col.variety]].some(isUnavailableAxisValue)) s.tiers[tier-1]++;
+        const score=Number(row[col.asavg]);
+        if(!isBlankValue(row[col.asavg])&&Number.isFinite(score)&&![row[col.date],row[col.plant],row[col.batch]].some(isUnavailableAxisValue)) {
+          s.appearance.sum+=score; s.appearance.count++; s.appearance.min=Math.min(s.appearance.min,score); s.appearance.max=Math.max(s.appearance.max,score);
+        }
+      }
+      return summaries;
+    }
+
+    function summarySentences(site) {
+      const s=state.summaries?.get(site);
+      if(!s) return ['No complete Tier Score records were available.','No complete Appearance Score records were available.'];
+      const tierTotal=s.tiers.reduce((a,b)=>a+b,0), leader=Math.max(...s.tiers), leaders=s.tiers.map((v,i)=>v===leader?i+1:null).filter(Boolean);
+      const leadText=leaders.length===1?`Tier ${leaders[0]} was most common`:`Tiers ${leaders.slice(0,-1).join(', ')} and ${leaders.at(-1)} were tied as most common`;
+      const tierText=tierTotal ? `Tier scores across ${tierTotal} records were T1 ${s.tiers[0]}, T2 ${s.tiers[1]}, T3 ${s.tiers[2]}, and T4 ${s.tiers[3]}; ${leadText}.` : 'No complete Tier Score records were available.';
+      const a=s.appearance;
+      const appearanceText=a.count ? `Appearance scores averaged ${(a.sum/a.count).toFixed(2)} across ${a.count} records, ranging from ${a.min.toFixed(2)} to ${a.max.toFixed(2)}.` : 'No complete Appearance Score records were available.';
+      return [tierText,appearanceText];
+    }
+
+    const valueLabels = {
+      id:'valueLabels',
+      afterDatasetsDraw(chart) {
+        const {ctx} = chart;
+        ctx.save(); ctx.fillStyle='#263238'; ctx.font='600 11px Segoe UI, Arial'; ctx.textAlign='center';
+        chart.data.datasets.forEach((dataset,di)=>{
+          chart.getDatasetMeta(di).data.forEach((bar,i)=>{
+            const value=dataset.data[i];
+            if (Number.isFinite(value)) ctx.fillText(value.toFixed(2).replace(/\.00$/,''),bar.x,bar.y-6);
+          });
+        });
+        ctx.restore();
+      }
+    };
+
+    const whiteBackground = {
+      id:'whiteBackground',
+      beforeDraw(chart) {
+        const {ctx,canvas}=chart;
+        ctx.save(); ctx.globalCompositeOperation='destination-over';
+        ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.restore();
+      }
+    };
+
+    const fileSafe = value => clean(value).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase();
+    const chunk = (items,size) => Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
+    const canvasBlob = canvas => new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG creation failed.')),'image/png',1));
+
+    async function downloadEmailAppearanceZip(site,groups,button) {
+      if (typeof JSZip==='undefined') throw new Error('ZIP library could not load. Check your internet connection and reopen the dashboard.');
+      const original=button.textContent; button.disabled=true; button.textContent='Building ZIP…';
+      try {
+        const zip=new JSZip();
+        const dateGroups=new Map();
+        groups.forEach(g=>{const key=formatDate(g.rawDate); if(!dateGroups.has(key)) dateGroups.set(key,[]); dateGroups.get(key).push(g);});
+        let imageCount=0;
+        const summary=summarySentences(site);
+        for (const [date,dateItems] of dateGroups) {
+          const pages=chunk(dateItems,12);
+          for (let page=0;page<pages.length;page++) {
+            const items=pages[page], canvas=document.createElement('canvas'); canvas.width=1200; canvas.height=700;
+            const part=pages.length>1 ? ` • Part ${page+1} of ${pages.length}` : '';
+            const chart=new Chart(canvas,{
+              type:'bar',
+              data:{labels:items.map(g=>[g.plant,g.batch]),datasets:[{label:'Average ASAVG',data:items.map(g=>g.sum/g.count),backgroundColor:BAR_COLOR,borderColor:'#159bd0',borderWidth:1,borderRadius:2,barPercentage:.7,categoryPercentage:.84}]},
+              options:{responsive:false,animation:false,devicePixelRatio:1,layout:{padding:{top:8,right:18,bottom:8,left:8}},plugins:{title:{display:true,text:`Appearance Scores — ${site} — ${date}${part}`,color:'#172b3a',font:{size:20,weight:'bold'},padding:{bottom:8}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:11},padding:{bottom:12}},legend:{display:false}},scales:{y:{beginAtZero:true,min:0,max:120,ticks:{stepSize:20,color:'#607781',font:{size:12}},title:{display:true,text:'Average appearance score',color:'#405660',font:{size:13,weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},title:{display:true,text:'Plant name • Batch',color:'#607781',font:{size:13,weight:'600'}}}}},plugins:[whiteBackground,valueLabels]
+            });
+            chart.update('none');
+            const suffix=pages.length>1?`-part-${page+1}`:'';
+            zip.file(`${fileSafe(site)}_${fileSafe(date)}_appearance-scores${suffix}.png`,await canvasBlob(canvas));
+            chart.destroy(); imageCount++;
+          }
+        }
+        const blob=await zip.generateAsync({type:'blob'});
+        const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${fileSafe(site)}_appearance-score_email-images.zip`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+        button.textContent=`Downloaded ${imageCount} images`;
+        setTimeout(()=>button.textContent=original,2200);
+      } finally { button.disabled=false; }
+    }
+
+    function stats(groups) {
+      const rowCount=groups.reduce((n,g)=>n+g.count,0);
+      const scoreSum=groups.reduce((n,g)=>n+g.sum,0);
+      return {rowCount,groupCount:groups.length,average:rowCount ? scoreSum/rowCount : 0};
+    }
+
+    function destroyCharts() { charts.forEach(c=>c.destroy()); charts.clear(); }
+
+    function render(selected='ALL') {
+      destroyCharts();
+      const root=$('charts'); root.innerHTML='';
+      const entries=[...state.sites.entries()].filter(([site])=>selected==='ALL'||site===selected);
+      for (const [site,groups] of entries) {
+        // Final defensive filter: blank or placeholder batches can never reach a chart.
+        const chartGroups=groups.filter(g=>!isUnavailableAxisValue(g.batch));
+        if (!chartGroups.length) continue;
+        const siteStats=stats(chartGroups);
+        const summary=summarySentences(site);
+        const card=document.createElement('article'); card.className='card';
+        card.innerHTML=`<div class="card-head"><div><h2>${escapeHtml(site)}</h2><p class="subtitle">${siteStats.rowCount} valid ASAVG rows across ${siteStats.groupCount} date / plant / batch groups</p><p class="site-summary"><span>${escapeHtml(summary[0])}</span><span>${escapeHtml(summary[1])}</span></p></div><div class="download-group"><button class="download full-download">Download full PNG</button><button class="download primary email-download">Download email-ready ZIP</button></div></div><div class="scroll"><div class="canvas-wrap" style="width:${Math.max(900,chartGroups.length*82)}px"><canvas></canvas></div></div>`;
+        root.appendChild(card);
+        const canvas=card.querySelector('canvas');
+        const chart=new Chart(canvas,{
+          type:'bar',
+          data:{
+            labels:chartGroups.map(g=>g.label),
+            datasets:[{label:'Average ASAVG',data:chartGroups.map(g=>g.sum/g.count),backgroundColor:BAR_COLOR,borderColor:'#159bd0',borderWidth:1,borderRadius:2,barPercentage:.72,categoryPercentage:.86}]
+          },
+          options:{
+            responsive:true,maintainAspectRatio:false,animation:false,
+            layout:{padding:{top:20,right:12}},
+            plugins:{
+              title:{display:true,text:`Appearance Score Distribution — ${site}`,color:'#172b3a',font:{size:18,weight:'bold'},padding:{bottom:6}},
+              subtitle:{display:true,text:summary,color:'#4e636e',font:{size:10},padding:{bottom:10}},
+              legend:{display:false},
+              tooltip:{callbacks:{title:items=>{const g=chartGroups[items[0].dataIndex]; return [`Date: ${g.label[0]}`,`Plant: ${g.plant}`,`Batch: ${g.batch}`];},label:item=>`Average ASAVG: ${Number(item.raw).toFixed(2)}`}}
+            },
+            scales:{
+              y:{beginAtZero:true,min:0,max:120,ticks:{precision:1,stepSize:20,color:'#607781'},title:{display:true,text:'Average appearance score',color:'#405660',font:{weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},
+              x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},border:{color:'#b8c6cc'},title:{display:true,text:'Scheduled delivery date • Plant name • Batch',color:'#607781',font:{weight:'600'}}}
+            }
+          },plugins:[whiteBackground,valueLabels]
+        });
+        charts.set(site,chart);
+        card.querySelector('.full-download').addEventListener('click',()=>{
+          const a=document.createElement('a'); a.href=chart.toBase64Image('image/png',1); a.download=`appearance-score-${site.replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase()}.png`; a.click();
+        });
+        card.querySelector('.email-download').addEventListener('click',async e=>{
+          try { await downloadEmailAppearanceZip(site,chartGroups,e.currentTarget); }
+          catch(error) { console.error(error); alert(error.message); e.currentTarget.disabled=false; }
+        });
+      }
+    }
+
+    function renderAudit() {
+      $('auditBody').innerHTML=[...state.sites.entries()].map(([site,groups])=>{
+        const s=stats(groups);
+        return `<tr><td>${escapeHtml(site)}</td><td>${s.rowCount}</td><td>${s.groupCount}</td><td><b>${s.average.toFixed(2)}</b></td></tr>`;
+      }).join('');
+      $('audit').hidden=false;
+    }
+
+    function renderMetrics(d,sheetName) {
+      const skipped=d.invalidScore+d.blankSite+d.blankAxis;
+      $('metrics').innerHTML=`<div class="metric"><b>${d.sourceRows}</b><span>Source rows</span></div><div class="metric"><b>${d.valid}</b><span>Charted complete ASAVG rows</span></div><div class="metric"><b>${state.sites.size}</b><span>Supplier sites</span></div><div class="metric"><b>${skipped}</b><span class="warning">Skipped (${d.invalidScore} blank/invalid ASAVG, ${d.blankSite} blank site, ${d.blankAxis} blank axis/batch)</span></div><div class="metric"><b>${escapeHtml(sheetName)}</b><span>Source worksheet</span></div>`;
+      $('metrics').hidden=false;
+    }
+
+    function downloadAuditCsv() {
+      const lines=[['Supplier Site','Valid rows','Batch groups','Overall ASAVG']];
+      for (const [site,groups] of state.sites) { const s=stats(groups); lines.push([site,s.rowCount,s.groupCount,s.average.toFixed(2)]); }
+      const csv=lines.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+      const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='appearance-score-aggregation-audit.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    }
+
+    async function processWorkbook(bytes,fileName) {
+      try {
+        if(typeof XLSX==='undefined'||typeof Chart==='undefined'||typeof JSZip==='undefined') throw new Error('Required browser libraries could not load. Check your internet connection and reopen this file.');
+        $('status').textContent=`Reading ${fileName}…`;
+        const workbook=XLSX.read(bytes,{type:'array',cellDates:true});
+        const source=chooseSourceSheet(workbook);
+        state=aggregate(source.rows);
+        state.summaries=buildSiteSummaries(source.rows);
+        if(!state.sites.size) throw new Error('No rows contain complete axis fields and a valid numeric ASAVG value.');
+        const filter=$('siteFilter');
+        filter.innerHTML='<option value="ALL">All supplier sites</option>'+[...state.sites.keys()].map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+        filter.disabled=false; $('csvButton').disabled=false;
+        renderMetrics(state.diagnostics,source.name); renderAudit(); render();
+        $('status').textContent=`Latest published data loaded from ${fileName}. Generated ${state.sites.size} Supplier Site charts.`;
+      } catch(error) {
+        console.error(error); $('status').textContent=`Error: ${error.message}`;
+        $('charts').innerHTML='<div class="panel empty">No charts generated.</div>';
+      }
+    }
+    $('excelFile').addEventListener('change',async event=>{
+      const file=event.target.files[0]; if(!file) return;
+      await processWorkbook(await file.arrayBuffer(),file.name);
+    });
+    async function loadPublishedWorkbook() {
+      try {
+        $('status').textContent='Loading the latest published QC workbook…';
+        const response=await fetch(`./data/qc_raw_data.xlsx?v=${Date.now()}`,{cache:'no-store'});
+        if(!response.ok) throw new Error(`Workbook request failed (${response.status}).`);
+        await processWorkbook(await response.arrayBuffer(),'qc_raw_data.xlsx');
+      } catch(error) {
+        console.error(error); $('status').textContent='The published workbook could not be loaded. You can still choose an Excel file manually.';
+      }
+    }
+    $('siteFilter').addEventListener('change',e=>render(e.target.value));
+    $('csvButton').addEventListener('click',downloadAuditCsv);
+    window.addEventListener('DOMContentLoaded',loadPublishedWorkbook);
+  </script>
+</body>
+</html>

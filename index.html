@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>QC Score Dashboards</title>
+  <style>
+    :root{--ink:#172b3a;--muted:#60737d;--green:#176b45;--line:#dce6e2}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#f4f8f6;font-family:Inter,Segoe UI,Arial,sans-serif}.shell{min-height:100vh;padding:72px 24px;background:radial-gradient(circle at 85% 5%,#d9eee4 0,transparent 28%),#f4f8f6}.hero,.grid,.note{width:min(1120px,100%);margin-inline:auto}.hero{padding:44px;border-radius:28px;color:#fff;background:linear-gradient(125deg,#0f3d2f,#176b45 58%,#24865d);box-shadow:0 20px 55px rgba(18,70,51,.18)}.eyebrow{font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#cceadb}.hero h1{margin:12px 0 10px;font-size:clamp(38px,6vw,66px);line-height:1;letter-spacing:-.05em}.hero p{max-width:720px;margin:0;color:#e3f2eb;font-size:18px;line-height:1.65}.pill{display:inline-flex;align-items:center;gap:9px;margin-top:25px;padding:9px 13px;border:1px solid rgba(255,255,255,.22);border-radius:999px;background:rgba(255,255,255,.1);font-size:13px}.pill i{width:9px;height:9px;border-radius:50%;background:#70e0a7;box-shadow:0 0 0 4px rgba(112,224,167,.15)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:24px}.card{position:relative;min-height:300px;display:flex;flex-direction:column;justify-content:space-between;padding:30px;overflow:hidden;border:1px solid var(--line);border-radius:22px;background:#fff;text-decoration:none;color:inherit;box-shadow:0 10px 30px rgba(23,43,58,.07);transition:.2s}.card:hover{transform:translateY(-4px);box-shadow:0 18px 38px rgba(23,43,58,.12)}.icon{width:48px;height:48px;display:grid;place-items:center;border-radius:14px;background:#edf5f1;color:var(--green);font-size:21px;font-weight:900}.appearance .icon{color:#087aa8;background:#e6f7fd}.label{margin:27px 0 5px;color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.card h2{margin:0;font-size:26px;letter-spacing:-.03em}.card p:last-child{max-width:390px;color:var(--muted);line-height:1.65}.open{font-weight:800;color:var(--green)}.appearance .open{color:#087aa8}.note{margin-top:24px;padding:24px 28px;border:1px solid var(--line);border-radius:18px;background:#fff}.note h2{margin:0 0 7px;font-size:18px}.note p{margin:0;color:var(--muted);line-height:1.65}.note code{padding:2px 6px;border-radius:5px;background:#edf3f0;color:#255944}@media(max-width:760px){.shell{padding:24px 14px}.hero{padding:30px 24px}.grid{grid-template-columns:1fr}.card{min-height:260px}.note code{overflow-wrap:anywhere}}
+  </style>
+</head>
+<body><main class="shell">
+  <section class="hero"><div class="eyebrow">Quality reporting</div><h1>QC Score Dashboards</h1><p>Live Tier and Appearance Score reporting by Supplier Site. Each dashboard reads the latest published QC workbook automatically.</p><div class="pill"><i></i>Latest workbook loads whenever a dashboard opens</div></section>
+  <section class="grid">
+    <a class="card" href="tier.html"><div><div class="icon">T</div><p class="label">Distribution</p><h2>Tier Score Dashboard</h2><p>Review Tier 1–4 counts by delivery date, plant, and variety.</p></div><span class="open">Open dashboard →</span></a>
+    <a class="card appearance" href="appearance.html"><div><div class="icon">A</div><p class="label">Average score</p><h2>Appearance Score Dashboard</h2><p>Review average ASAVG results by delivery date, plant, and batch.</p></div><span class="open">Open dashboard →</span></a>
+  </section>
+  <section class="note"><h2>Daily data refresh</h2><p>Replace <code>data/qc_raw_data.xlsx</code> using the same filename, then push the update. Both dashboards will use the new workbook automatically.</p></section>
+</main></body>
+</html>
