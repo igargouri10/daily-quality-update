@@ -48,6 +48,10 @@
     .download-group { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
     .scroll { overflow-x:auto; padding:14px 16px 8px; }
     .canvas-wrap { height:440px; min-width:900px; }
+    .pager { display:flex; align-items:center; justify-content:center; gap:10px; padding:0 16px 14px; }
+    .pager button { border:1px solid #cbd7dc; background:#fff; color:var(--ink); border-radius:8px; padding:7px 12px; font-weight:700; cursor:pointer; }
+    .pager button:disabled { opacity:.4; cursor:not-allowed; }
+    .page-status { min-width:170px; text-align:center; color:var(--muted); font-size:12px; }
     .empty { padding:60px 20px; text-align:center; color:var(--muted); }
     .audit { margin-top:20px; padding:20px; }
     .audit h2 { margin:0 0 12px; }
@@ -62,7 +66,7 @@
 <body>
   <header>
     <h1>Appearance Score Distribution</h1>
-    <p>Average ASAVG by scheduled delivery date, plant, and batch • Dashboard v3</p>
+    <p>Average ASAVG by scheduled delivery date, plant, field, and batch • Dashboard v4</p>
   </header>
   <main>
     <section class="panel">
@@ -100,7 +104,7 @@
     };
     const isUnavailableAxisValue = value => {
       if (isBlankValue(value)) return true;
-      return /^(?:variety|batch|plant|date)\s+unavailable$/i.test(clean(value));
+      return /^(?:variety|batch|plant|field|date)\s+unavailable$/i.test(clean(value));
     };
     const escapeHtml = value => clean(value).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -152,6 +156,7 @@
         asavg: findColumn(headers,['ASAVG','Appearance Score','APPEARANCE_SCORE']),
         date: findColumn(headers,['SCHEDULED_DELIVERY_DATE','Scheduled Delivery Date']),
         plant: findColumn(headers,['PLANT NAME','PLANT_NAME']),
+        field: findColumn(headers,['FIELD']),
         batch: findColumn(headers,['Batch','BATCH'])
       };
       const missing = Object.entries(col).filter(([,i])=>i<0).map(([name])=>name);
@@ -170,20 +175,22 @@
 
         const rawDate = row[col.date];
         const plantValue = row[col.plant];
+        const fieldValue = row[col.field];
         const batchValue = row[col.batch];
-        if ([rawDate,plantValue,batchValue].some(isUnavailableAxisValue)) {
+        if ([rawDate,plantValue,fieldValue,batchValue].some(isUnavailableAxisValue)) {
           diagnostics.blankAxis++;
           continue;
         }
 
         const site = clean(siteValue);
         const plant = clean(plantValue);
+        const field = clean(fieldValue);
         const batch = clean(batchValue);
-        const label = [formatDate(rawDate),plant,batch];
-        const key = [clean(rawDate),plant,batch].join('\u001f');
+        const label = [formatDate(rawDate),plant,field,batch];
+        const key = [clean(rawDate),plant,field,batch].join('\u001f');
         if (!sites.has(site)) sites.set(site,new Map());
         const groups = sites.get(site);
-        if (!groups.has(key)) groups.set(key,{label,rawDate,plant,batch,sum:0,count:0});
+        if (!groups.has(key)) groups.set(key,{label,rawDate,plant,field,batch,sum:0,count:0});
         groups.get(key).sum += score;
         groups.get(key).count++;
         diagnostics.valid++;
@@ -193,6 +200,7 @@
         result.set(site,[...groups.values()].sort((a,b)=>
           dateSortValue(a.rawDate)-dateSortValue(b.rawDate) ||
           a.plant.localeCompare(b.plant,undefined,{numeric:true}) ||
+          a.field.localeCompare(b.field,undefined,{numeric:true}) ||
           a.batch.localeCompare(b.batch,undefined,{numeric:true})
         ));
       });
@@ -201,7 +209,7 @@
 
     function buildSiteSummaries(rows) {
       const headers=rows[0];
-      const col={site:findColumn(headers,['Supplier Site','SUPPLIER_SITE']),tier:findColumn(headers,['TIER','Tier Score','TIER_SCORE']),asavg:findColumn(headers,['ASAVG','Appearance Score','APPEARANCE_SCORE']),date:findColumn(headers,['SCHEDULED_DELIVERY_DATE','Scheduled Delivery Date']),plant:findColumn(headers,['PLANT NAME','PLANT_NAME']),variety:findColumn(headers,['VARIETY']),batch:findColumn(headers,['Batch','BATCH'])};
+      const col={site:findColumn(headers,['Supplier Site','SUPPLIER_SITE']),tier:findColumn(headers,['TIER','Tier Score','TIER_SCORE']),asavg:findColumn(headers,['ASAVG','Appearance Score','APPEARANCE_SCORE']),date:findColumn(headers,['SCHEDULED_DELIVERY_DATE','Scheduled Delivery Date']),plant:findColumn(headers,['PLANT NAME','PLANT_NAME']),field:findColumn(headers,['FIELD']),variety:findColumn(headers,['VARIETY']),batch:findColumn(headers,['Batch','BATCH'])};
       if(Object.values(col).some(i=>i<0)) return new Map();
       const summaries=new Map();
       for(const row of rows.slice(1)) {
@@ -210,9 +218,9 @@
         if(!summaries.has(site)) summaries.set(site,{tiers:[0,0,0,0],appearance:{sum:0,count:0,min:Infinity,max:-Infinity}});
         const s=summaries.get(site);
         const tier=Number(row[col.tier]);
-        if(Number.isInteger(tier)&&[1,2,3,4].includes(tier)&&![row[col.date],row[col.plant],row[col.variety]].some(isUnavailableAxisValue)) s.tiers[tier-1]++;
+        if(Number.isInteger(tier)&&[1,2,3,4].includes(tier)&&![row[col.date],row[col.plant],row[col.field],row[col.variety]].some(isUnavailableAxisValue)) s.tiers[tier-1]++;
         const score=Number(row[col.asavg]);
-        if(!isBlankValue(row[col.asavg])&&Number.isFinite(score)&&![row[col.date],row[col.plant],row[col.batch]].some(isUnavailableAxisValue)) {
+        if(!isBlankValue(row[col.asavg])&&Number.isFinite(score)&&![row[col.date],row[col.plant],row[col.field],row[col.batch]].some(isUnavailableAxisValue)) {
           s.appearance.sum+=score; s.appearance.count++; s.appearance.min=Math.min(s.appearance.min,score); s.appearance.max=Math.max(s.appearance.max,score);
         }
       }
@@ -256,6 +264,7 @@
 
     const fileSafe = value => clean(value).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase();
     const chunk = (items,size) => Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
+    const SCREEN_PAGE_SIZE = 40;
     const canvasBlob = canvas => new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG creation failed.')),'image/png',1));
 
     async function downloadEmailAppearanceZip(site,groups,button) {
@@ -274,8 +283,8 @@
             const part=pages.length>1 ? ` • Part ${page+1} of ${pages.length}` : '';
             const chart=new Chart(canvas,{
               type:'bar',
-              data:{labels:items.map(g=>[g.plant,g.batch]),datasets:[{label:'Average ASAVG',data:items.map(g=>g.sum/g.count),backgroundColor:BAR_COLOR,borderColor:'#159bd0',borderWidth:1,borderRadius:2,barPercentage:.7,categoryPercentage:.84}]},
-              options:{responsive:false,animation:false,devicePixelRatio:1,layout:{padding:{top:8,right:18,bottom:8,left:8}},plugins:{title:{display:true,text:`Appearance Scores — ${site} — ${date}${part}`,color:'#172b3a',font:{size:20,weight:'bold'},padding:{bottom:8}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:11},padding:{bottom:12}},legend:{display:false}},scales:{y:{beginAtZero:true,min:0,max:120,ticks:{stepSize:20,color:'#607781',font:{size:12}},title:{display:true,text:'Average appearance score',color:'#405660',font:{size:13,weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},title:{display:true,text:'Plant name • Batch',color:'#607781',font:{size:13,weight:'600'}}}}},plugins:[whiteBackground,valueLabels]
+              data:{labels:items.map(g=>[g.plant,g.field,g.batch]),datasets:[{label:'Average ASAVG',data:items.map(g=>g.sum/g.count),backgroundColor:BAR_COLOR,borderColor:'#159bd0',borderWidth:1,borderRadius:2,barPercentage:.7,categoryPercentage:.84}]},
+              options:{responsive:false,animation:false,devicePixelRatio:1,layout:{padding:{top:8,right:18,bottom:8,left:8}},plugins:{title:{display:true,text:`Appearance Scores — ${site} — ${date}${part}`,color:'#172b3a',font:{size:20,weight:'bold'},padding:{bottom:8}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:11},padding:{bottom:12}},legend:{display:false}},scales:{y:{beginAtZero:true,min:0,max:120,ticks:{stepSize:20,color:'#607781',font:{size:12}},title:{display:true,text:'Average appearance score',color:'#405660',font:{size:13,weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},title:{display:true,text:'Plant name • Field • Batch',color:'#607781',font:{size:13,weight:'600'}}}}},plugins:[whiteBackground,valueLabels]
             });
             chart.update('none');
             const suffix=pages.length>1?`-part-${page+1}`:'';
@@ -309,33 +318,26 @@
         const siteStats=stats(chartGroups);
         const summary=summarySentences(site);
         const card=document.createElement('article'); card.className='card';
-        card.innerHTML=`<div class="card-head"><div><h2>${escapeHtml(site)}</h2><p class="subtitle">${siteStats.rowCount} valid ASAVG rows across ${siteStats.groupCount} date / plant / batch groups</p><p class="site-summary"><span>${escapeHtml(summary[0])}</span><span>${escapeHtml(summary[1])}</span></p></div><div class="download-group"><button class="download full-download">Download full PNG</button><button class="download primary email-download">Download email-ready ZIP</button></div></div><div class="scroll"><div class="canvas-wrap" style="width:${Math.max(900,chartGroups.length*82)}px"><canvas></canvas></div></div>`;
+        const pages=chunk(chartGroups,SCREEN_PAGE_SIZE);
+        card.innerHTML=`<div class="card-head"><div><h2>${escapeHtml(site)}</h2><p class="subtitle">${siteStats.rowCount} valid ASAVG rows across ${siteStats.groupCount} date / plant / field / batch groups</p><p class="site-summary"><span>${escapeHtml(summary[0])}</span><span>${escapeHtml(summary[1])}</span></p></div><div class="download-group"><button class="download full-download">Download visible page PNG</button><button class="download primary email-download">Download email-ready ZIP</button></div></div><div class="scroll"><div class="canvas-wrap"><canvas></canvas></div></div><div class="pager"><button class="page-prev">Previous</button><span class="page-status"></span><button class="page-next">Next</button></div>`;
         root.appendChild(card);
         const canvas=card.querySelector('canvas');
-        const chart=new Chart(canvas,{
-          type:'bar',
-          data:{
-            labels:chartGroups.map(g=>g.label),
-            datasets:[{label:'Average ASAVG',data:chartGroups.map(g=>g.sum/g.count),backgroundColor:BAR_COLOR,borderColor:'#159bd0',borderWidth:1,borderRadius:2,barPercentage:.72,categoryPercentage:.86}]
-          },
-          options:{
-            responsive:true,maintainAspectRatio:false,animation:false,
-            layout:{padding:{top:20,right:12}},
-            plugins:{
-              title:{display:true,text:`Appearance Score Distribution — ${site}`,color:'#172b3a',font:{size:18,weight:'bold'},padding:{bottom:6}},
-              subtitle:{display:true,text:summary,color:'#4e636e',font:{size:10},padding:{bottom:10}},
-              legend:{display:false},
-              tooltip:{callbacks:{title:items=>{const g=chartGroups[items[0].dataIndex]; return [`Date: ${g.label[0]}`,`Plant: ${g.plant}`,`Batch: ${g.batch}`];},label:item=>`Average ASAVG: ${Number(item.raw).toFixed(2)}`}}
-            },
-            scales:{
-              y:{beginAtZero:true,min:0,max:120,ticks:{precision:1,stepSize:20,color:'#607781'},title:{display:true,text:'Average appearance score',color:'#405660',font:{weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},
-              x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},border:{color:'#b8c6cc'},title:{display:true,text:'Scheduled delivery date • Plant name • Batch',color:'#607781',font:{weight:'600'}}}
-            }
-          },plugins:[whiteBackground,valueLabels]
-        });
-        charts.set(site,chart);
+        const prev=card.querySelector('.page-prev'), next=card.querySelector('.page-next'), pageStatus=card.querySelector('.page-status');
+        let pageIndex=0;
+        const drawPage=()=>{
+          charts.get(site)?.destroy();
+          const pageGroups=pages[pageIndex];
+          const chart=new Chart(canvas,{type:'bar',data:{labels:pageGroups.map(g=>g.label),datasets:[{label:'Average ASAVG',data:pageGroups.map(g=>g.sum/g.count),backgroundColor:BAR_COLOR,borderColor:'#159bd0',borderWidth:1,borderRadius:2,barPercentage:.72,categoryPercentage:.86}]},options:{responsive:true,maintainAspectRatio:false,animation:false,layout:{padding:{top:20,right:12}},plugins:{title:{display:true,text:`Appearance Score Distribution — ${site}`,color:'#172b3a',font:{size:18,weight:'bold'},padding:{bottom:6}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:10},padding:{bottom:10}},legend:{display:false},tooltip:{callbacks:{title:items=>{const g=pageGroups[items[0].dataIndex]; return [`Date: ${g.label[0]}`,`Plant: ${g.plant}`,`Field: ${g.field}`,`Batch: ${g.batch}`];},label:item=>`Average ASAVG: ${Number(item.raw).toFixed(2)}`}}},scales:{y:{beginAtZero:true,min:0,max:120,ticks:{precision:1,stepSize:20,color:'#607781'},title:{display:true,text:'Average appearance score',color:'#405660',font:{weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:9}},grid:{display:false},border:{color:'#b8c6cc'},title:{display:true,text:'Scheduled delivery date • Plant name • Field • Batch',color:'#607781',font:{weight:'600'}}}}},plugins:[whiteBackground,valueLabels]});
+          charts.set(site,chart);
+          prev.disabled=pageIndex===0; next.disabled=pageIndex===pages.length-1;
+          const first=pageIndex*SCREEN_PAGE_SIZE+1, last=Math.min((pageIndex+1)*SCREEN_PAGE_SIZE,chartGroups.length);
+          pageStatus.textContent=`Page ${pageIndex+1} of ${pages.length} • groups ${first}–${last}`;
+        };
+        prev.addEventListener('click',()=>{if(pageIndex>0){pageIndex--;drawPage();}});
+        next.addEventListener('click',()=>{if(pageIndex<pages.length-1){pageIndex++;drawPage();}});
+        drawPage();
         card.querySelector('.full-download').addEventListener('click',()=>{
-          const a=document.createElement('a'); a.href=chart.toBase64Image('image/png',1); a.download=`appearance-score-${site.replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase()}.png`; a.click();
+          const a=document.createElement('a'); a.href=charts.get(site).toBase64Image('image/png',1); a.download=`appearance-score-${fileSafe(site)}-page-${pageIndex+1}.png`; a.click();
         });
         card.querySelector('.email-download').addEventListener('click',async e=>{
           try { await downloadEmailAppearanceZip(site,chartGroups,e.currentTarget); }
@@ -354,7 +356,7 @@
 
     function renderMetrics(d,sheetName) {
       const skipped=d.invalidScore+d.blankSite+d.blankAxis;
-      $('metrics').innerHTML=`<div class="metric"><b>${d.sourceRows}</b><span>Source rows</span></div><div class="metric"><b>${d.valid}</b><span>Charted complete ASAVG rows</span></div><div class="metric"><b>${state.sites.size}</b><span>Supplier sites</span></div><div class="metric"><b>${skipped}</b><span class="warning">Skipped (${d.invalidScore} blank/invalid ASAVG, ${d.blankSite} blank site, ${d.blankAxis} blank axis/batch)</span></div><div class="metric"><b>${escapeHtml(sheetName)}</b><span>Source worksheet</span></div>`;
+      $('metrics').innerHTML=`<div class="metric"><b>${d.sourceRows}</b><span>Source rows</span></div><div class="metric"><b>${d.valid}</b><span>Charted complete ASAVG rows</span></div><div class="metric"><b>${state.sites.size}</b><span>Supplier sites</span></div><div class="metric"><b>${skipped}</b><span class="warning">Skipped (${d.invalidScore} blank/invalid ASAVG, ${d.blankSite} blank site, ${d.blankAxis} blank date/plant/field/batch)</span></div><div class="metric"><b>${escapeHtml(sheetName)}</b><span>Source worksheet</span></div>`;
       $('metrics').hidden=false;
     }
 
