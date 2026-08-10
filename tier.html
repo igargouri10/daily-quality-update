@@ -26,8 +26,7 @@
     .file-label { background:var(--accent); color:#fff; }
     .file-label:hover { filter:brightness(.95); }
     input[type=file] { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
-    select { min-width:210px; padding:11px 34px 11px 12px; border:2px solid #8bb7a4; border-radius:9px; background:#fff; color:var(--ink); font-weight:600; }
-    .filter-title { flex-basis:100%; color:var(--ink); font-weight:800; margin-top:6px; }
+    select { min-width:230px; padding:10px 12px; border:1px solid #cbd7dc; border-radius:9px; background:#fff; color:var(--ink); }
     .button { background:#e9f2ee; color:#15583b; }
     .button:disabled { opacity:.45; cursor:not-allowed; }
     #status { margin:13px 0 0; color:var(--muted); }
@@ -74,12 +73,7 @@
       <div class="controls">
         <label class="file-label" for="excelFile">Choose Excel file</label>
         <input id="excelFile" type="file" accept=".xlsx,.xls,.xlsm">
-        <span class="filter-title">Chart filters</span>
         <select id="siteFilter" aria-label="Filter supplier site" disabled><option>All supplier sites</option></select>
-        <select id="dateFilter" aria-label="Filter scheduled delivery date" disabled><option>All delivery dates</option></select>
-        <select id="fieldFilter" aria-label="Filter field" disabled><option>All fields</option></select>
-        <select id="plantFilter" aria-label="Filter plant name" disabled><option>All plants</option></select>
-        <select id="varietyFilter" aria-label="Filter variety" disabled><option>All varieties</option></select>
         <button class="button" id="csvButton" disabled>Download audit CSV</button>
       </div>
       <p id="status">Choose the QC workbook to generate the charts. Processing stays in your browser.</p>
@@ -270,7 +264,7 @@
 
     const fileSafe = value => clean(value).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase();
     const chunk = (items,size) => Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
-    const SCREEN_PAGE_SIZE = 8;
+    const SCREEN_PAGE_SIZE = 40;
     const canvasBlob = canvas => new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG creation failed.')),'image/png',1));
 
     async function downloadEmailTierZip(site,groups,button) {
@@ -312,40 +306,13 @@
 
     function destroyCharts() { charts.forEach(c=>c.destroy()); charts.clear(); }
 
-    function filterValues() {
-      return {site:$('siteFilter').value,date:$('dateFilter').value,plant:$('plantFilter').value,field:$('fieldFilter').value,variety:$('varietyFilter').value};
-    }
-
-    function setFilterOptions(id,allLabel,values) {
-      const select=$(id), previous=select.value;
-      select.innerHTML=`<option value="ALL">${allLabel}</option>`+values.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
-      select.value=values.includes(previous)?previous:'ALL';
-      select.disabled=false;
-    }
-
-    function populateChartFilters(reset=false) {
-      const site=$('siteFilter').value;
-      const groups=[...state.sites.entries()].filter(([name])=>site==='ALL'||name===site).flatMap(([,items])=>items);
-      if(reset) ['dateFilter','plantFilter','fieldFilter','varietyFilter'].forEach(id=>$(id).value='ALL');
-      const unique=(values,sorted=true)=>{const result=[...new Set(values)]; return sorted?result.sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})):result;};
-      setFilterOptions('dateFilter','All delivery dates',unique(groups.map(g=>formatDate(g.rawDate)),false));
-      setFilterOptions('plantFilter','All plants',unique(groups.map(g=>g.plant)));
-      setFilterOptions('fieldFilter','All fields',unique(groups.map(g=>g.field)));
-      setFilterOptions('varietyFilter','All varieties',unique(groups.map(g=>g.variety)));
-    }
-
-    function render() {
+    function render(selected='ALL') {
       destroyCharts();
       const root=$('charts'); root.innerHTML='';
-      const filters=filterValues();
-      const entries=[...state.sites.entries()].filter(([site])=>filters.site==='ALL'||site===filters.site);
+      const entries=[...state.sites.entries()].filter(([site])=>selected==='ALL'||site===selected);
       for (const [site,groups] of entries) {
         // Final defensive filter: placeholder variety groups can never reach a chart.
-        const chartGroups=groups.filter(g=>!isUnavailableAxisValue(g.variety) &&
-          (filters.date==='ALL'||formatDate(g.rawDate)===filters.date) &&
-          (filters.plant==='ALL'||g.plant===filters.plant) &&
-          (filters.field==='ALL'||g.field===filters.field) &&
-          (filters.variety==='ALL'||g.variety===filters.variety));
+        const chartGroups=groups.filter(g=>!isUnavailableAxisValue(g.variety));
         if (!chartGroups.length) continue;
         const siteTotals=totals(chartGroups), total=siteTotals.reduce((a,b)=>a+b,0);
         const summary=summarySentences(site);
@@ -354,8 +321,7 @@
         card.innerHTML=`<div class="card-head"><div><h2>${escapeHtml(site)}</h2><p class="subtitle">${total} valid tier records across ${chartGroups.length} date / plant / field / variety groups</p><p class="site-summary"><span>${escapeHtml(summary[0])}</span><span>${escapeHtml(summary[1])}</span></p></div><div class="download-group"><button class="download full-download">Download visible page PNG</button><button class="download primary email-download">Download email-ready ZIP</button></div></div><div class="scroll"><div class="canvas-wrap"><canvas></canvas></div></div><div class="pager"><button class="page-prev">Previous</button><span class="page-status"></span><button class="page-next">Next</button></div>`;
         root.appendChild(card);
         const canvas=card.querySelector('canvas');
-        const pager=card.querySelector('.pager'), prev=card.querySelector('.page-prev'), next=card.querySelector('.page-next'), pageStatus=card.querySelector('.page-status');
-        pager.hidden=pages.length===1;
+        const prev=card.querySelector('.page-prev'), next=card.querySelector('.page-next'), pageStatus=card.querySelector('.page-status');
         let pageIndex=0;
         const drawPage=()=>{
           charts.get(site)?.destroy();
@@ -378,7 +344,6 @@
           catch(error) { console.error(error); alert(error.message); e.currentTarget.disabled=false; }
         });
       }
-      if(!root.children.length) root.innerHTML='<div class="panel empty">No Tier Score groups match the selected filters.</div>';
     }
 
     function renderAudit() {
@@ -414,7 +379,7 @@
         const filter=$('siteFilter');
         filter.innerHTML='<option value="ALL">All supplier sites</option>'+[...state.sites.keys()].map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
         filter.disabled=false; $('csvButton').disabled=false;
-        populateChartFilters(true); renderMetrics(state.diagnostics,source.name); renderAudit(); render();
+        renderMetrics(state.diagnostics,source.name); renderAudit(); render();
         $('status').textContent=`Latest published data loaded from ${fileName}. Generated ${state.sites.size} Supplier Site charts.`;
       } catch(error) {
         console.error(error); $('status').textContent=`Error: ${error.message}`;
@@ -435,8 +400,7 @@
         console.error(error); $('status').textContent='The published workbook could not be loaded. You can still choose an Excel file manually.';
       }
     }
-    $('siteFilter').addEventListener('change',()=>{populateChartFilters(true);render();});
-    ['dateFilter','plantFilter','fieldFilter','varietyFilter'].forEach(id=>$(id).addEventListener('change',render));
+    $('siteFilter').addEventListener('change',e=>render(e.target.value));
     $('csvButton').addEventListener('click',downloadAuditCsv);
     window.addEventListener('DOMContentLoaded',loadPublishedWorkbook);
   </script>
