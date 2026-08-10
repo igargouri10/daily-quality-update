@@ -26,7 +26,10 @@
     .file-label { background:var(--accent); color:#fff; }
     .file-label:hover { filter:brightness(.95); }
     input[type=file] { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
-    select { min-width:230px; padding:10px 12px; border:1px solid #cbd7dc; border-radius:9px; background:#fff; color:var(--ink); }
+    select { min-width:210px; padding:11px 34px 11px 12px; border:2px solid #4f9a79; border-radius:9px; background:#fff; color:var(--ink); font-weight:700; box-shadow:0 2px 7px rgba(23,107,69,.10); }
+    select:focus { outline:3px solid rgba(23,107,69,.20); border-color:var(--accent); }
+    .filter-control { display:grid; gap:5px; color:#405660; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .filter-title { flex-basis:100%; color:var(--ink); font-weight:800; margin-top:6px; }
     .button { background:#e9f2ee; color:#15583b; }
     .button:disabled { opacity:.45; cursor:not-allowed; }
     #status { margin:13px 0 0; color:var(--muted); }
@@ -54,30 +57,55 @@
     .page-status { min-width:170px; text-align:center; color:var(--muted); font-size:12px; }
     .empty { padding:60px 20px; text-align:center; color:var(--muted); }
     .audit { margin-top:20px; padding:20px; }
+    .comparison { margin-bottom:20px; padding:20px; }
+    .comparison h2,.sourcing h3 { margin:0 0 6px; }
+    .compare-controls { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin:16px 0; }
+    .compare-controls label { display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
+    .compare-result { display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,.5fr); gap:18px; align-items:center; }
+    .compare-canvas { height:300px; }
+    .insight { background:#f4f8f6; border-left:4px solid var(--accent); border-radius:8px; padding:14px; line-height:1.6; }
+    .sourcing { margin:0 20px 20px; padding:16px; border:1px solid var(--line); border-radius:10px; background:#fbfcfc; }
+    .table-scroll { overflow:auto; max-height:320px; }
     .audit h2 { margin:0 0 12px; }
     table { width:100%; border-collapse:collapse; }
     th,td { text-align:right; padding:10px 12px; border-bottom:1px solid var(--line); }
     th:first-child,td:first-child { text-align:left; }
     th { color:#4e636e; background:#f7f9fa; }
     [hidden] { display:none!important; }
-    @media (max-width:650px) { main{padding:14px}.card-head{flex-direction:column}.canvas-wrap{height:390px} }
+    @media (max-width:750px) { main{padding:14px}.card-head{flex-direction:column}.canvas-wrap{height:390px}.compare-result{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
   <header>
     <h1>Tier Score Distribution</h1>
-    <p>Tier counts by scheduled delivery date, plant, field, and variety • Dashboard v6</p>
+    <p>Tier counts by delivery date, plant, field/cropzone, and variety • Corrected Dashboard v8</p>
   </header>
   <main>
     <section class="panel">
       <div class="controls">
         <label class="file-label" for="excelFile">Choose Excel file</label>
         <input id="excelFile" type="file" accept=".xlsx,.xls,.xlsm">
-        <select id="siteFilter" aria-label="Filter supplier site" disabled><option>All supplier sites</option></select>
+        <span class="filter-title">Chart filters</span>
+        <label class="filter-control">Supplier Site<select id="siteFilter" aria-label="Filter supplier site" disabled><option>All supplier sites</option></select></label>
+        <label class="filter-control">Delivery Date<select id="dateFilter" aria-label="Filter scheduled delivery date" disabled><option>Latest delivery date</option></select></label>
+        <label class="filter-control">Plant Name<select id="plantFilter" aria-label="Filter plant name" disabled><option>All plants</option></select></label>
+        <label class="filter-control">Field / Cropzone<select id="fieldFilter" aria-label="Filter field" disabled><option>All fields</option></select></label>
+        <label class="filter-control">Variety<select id="varietyFilter" aria-label="Filter variety" disabled><option>All varieties</option></select></label>
         <button class="button" id="csvButton" disabled>Download audit CSV</button>
       </div>
       <p id="status">Choose the QC workbook to generate the charts. Processing stays in your browser.</p>
       <div id="metrics" class="metrics" hidden></div>
+    </section>
+    <section id="comparison" class="panel comparison" hidden>
+      <h2>Field-to-field Tier comparison</h2>
+      <p class="subtitle">Compare one field with another field—or with all remaining fields—within one plant.</p>
+      <div class="compare-controls">
+        <label>Supplier Site<select id="compareSite"></select></label>
+        <label>Plant<select id="comparePlant"></select></label>
+        <label>Focus field<select id="compareFieldA"></select></label>
+        <label>Compare with<select id="compareTarget"><option value="REST">All other fields</option></select></label>
+      </div>
+      <div class="compare-result"><div class="compare-canvas"><canvas id="compareCanvas"></canvas></div><p id="compareInsight" class="insight"></p></div>
     </section>
     <section id="charts" class="charts"><div class="panel empty">No workbook loaded.</div></section>
     <section id="audit" class="panel audit" hidden>
@@ -93,6 +121,7 @@
     const TIERS = [1,2,3,4];
     const COLORS = ['#1b5e20','#66bb6a','#f9a825','#e65100'];
     const charts = new Map();
+    let comparisonChart = null;
     let state = null;
 
     const $ = id => document.getElementById(id);
@@ -218,9 +247,9 @@
         if(!summaries.has(site)) summaries.set(site,{tiers:[0,0,0,0],appearance:{sum:0,count:0,min:Infinity,max:-Infinity}});
         const s=summaries.get(site);
         const tier=Number(row[col.tier]);
-        if(Number.isInteger(tier)&&TIERS.includes(tier)&&![row[col.date],row[col.plant],row[col.field],row[col.variety]].some(isUnavailableAxisValue)) s.tiers[tier-1]++;
+        if(Number.isInteger(tier)&&TIERS.includes(tier)&&![row[col.plant],row[col.field],row[col.variety]].some(isUnavailableAxisValue)) s.tiers[tier-1]++;
         const score=Number(row[col.asavg]);
-        if(!isBlankValue(row[col.asavg])&&Number.isFinite(score)&&![row[col.date],row[col.plant],row[col.field],row[col.batch]].some(isUnavailableAxisValue)) {
+        if(!isBlankValue(row[col.asavg])&&Number.isFinite(score)&&![row[col.plant],row[col.field],row[col.batch]].some(isUnavailableAxisValue)) {
           s.appearance.sum+=score; s.appearance.count++; s.appearance.min=Math.min(s.appearance.min,score); s.appearance.max=Math.max(s.appearance.max,score);
         }
       }
@@ -264,7 +293,7 @@
 
     const fileSafe = value => clean(value).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase();
     const chunk = (items,size) => Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
-    const SCREEN_PAGE_SIZE = 40;
+    const SCREEN_PAGE_SIZE = 8;
     const canvasBlob = canvas => new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG creation failed.')),'image/png',1));
 
     async function downloadEmailTierZip(site,groups,button) {
@@ -273,7 +302,7 @@
       try {
         const zip=new JSZip();
         const dateGroups=new Map();
-        groups.forEach(g=>{const key=formatDate(g.rawDate); if(!dateGroups.has(key)) dateGroups.set(key,[]); dateGroups.get(key).push(g);});
+        groups.forEach(g=>{const key=g.plant; if(!dateGroups.has(key)) dateGroups.set(key,[]); dateGroups.get(key).push(g);});
         const scaleMax=Math.max(1,...groups.flatMap(g=>g.counts))+1;
         let imageCount=0;
         const summary=summarySentences(site);
@@ -284,8 +313,8 @@
             const part=pages.length>1 ? ` • Part ${page+1} of ${pages.length}` : '';
             const chart=new Chart(canvas,{
               type:'bar',
-              data:{labels:items.map(g=>[g.plant,g.field,g.variety]),datasets:TIERS.map((tier,i)=>({label:`Tier ${tier}`,data:items.map(g=>g.counts[i]),backgroundColor:COLORS[i],borderColor:'#fff',borderWidth:1,borderRadius:2,barPercentage:.86,categoryPercentage:.82}))},
-              options:{responsive:false,animation:false,devicePixelRatio:1,layout:{padding:{top:8,right:18,bottom:8,left:8}},plugins:{title:{display:true,text:`Tier Score Distribution — ${site} — ${date}${part}`,color:'#172b3a',font:{size:20,weight:'bold'},padding:{bottom:8}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:11},padding:{bottom:12}},legend:{position:'top',align:'center',labels:{usePointStyle:true,pointStyle:'rectRounded',padding:20,color:'#334851',font:{size:13,weight:'600'}}}},scales:{y:{beginAtZero:true,max:scaleMax,ticks:{precision:0,stepSize:1,color:'#607781',font:{size:12}},title:{display:true,text:'Number of records',color:'#405660',font:{size:13,weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:11}},grid:{display:false},title:{display:true,text:'Plant name • Field • Variety',color:'#607781',font:{size:13,weight:'600'}}}}},plugins:[whiteBackground,valueLabels]
+              data:{labels:items.map(g=>[formatDate(g.rawDate),g.plant,g.field,g.variety]),datasets:TIERS.map((tier,i)=>({label:`Tier ${tier}`,data:items.map(g=>g.counts[i]),backgroundColor:COLORS[i],borderColor:'#fff',borderWidth:1,borderRadius:2,barPercentage:.86,categoryPercentage:.82}))},
+              options:{responsive:false,animation:false,devicePixelRatio:1,layout:{padding:{top:8,right:18,bottom:8,left:8}},plugins:{title:{display:true,text:`Tier Score Distribution — ${site} — ${date}${part}`,color:'#172b3a',font:{size:20,weight:'bold'},padding:{bottom:8}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:11},padding:{bottom:12}},legend:{position:'top',align:'center',labels:{usePointStyle:true,pointStyle:'rectRounded',padding:20,color:'#334851',font:{size:13,weight:'600'}}}},scales:{y:{beginAtZero:true,max:scaleMax,ticks:{precision:0,stepSize:1,color:'#607781',font:{size:12}},title:{display:true,text:'Number of records',color:'#405660',font:{size:13,weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:11}},grid:{display:false},title:{display:true,text:'Scheduled delivery date • Plant name • Field • Variety',color:'#607781',font:{size:13,weight:'600'}}}}},plugins:[whiteBackground,valueLabels]
             });
             chart.update('none');
             const suffix=pages.length>1?`-part-${page+1}`:'';
@@ -304,30 +333,127 @@
       return groups.reduce((sum,g)=>sum.map((v,i)=>v+g.counts[i]),[0,0,0,0]);
     }
 
+    function sourcingHtml(groups) {
+      const fields=new Map();
+      groups.forEach(g=>{
+        if(!fields.has(g.field)) fields.set(g.field,{plants:new Set(),varieties:new Set(),counts:[0,0,0,0]});
+        const f=fields.get(g.field); f.plants.add(g.plant); f.varieties.add(g.variety);
+        f.counts=f.counts.map((v,i)=>v+g.counts[i]);
+      });
+      const rows=[...fields.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true})).map(([field,f])=>{
+        const total=f.counts.reduce((a,b)=>a+b,0);
+        return `<tr><td>${escapeHtml(field)}</td><td>${escapeHtml([...f.plants].join(', '))}</td><td>${escapeHtml([...f.varieties].sort().join(', '))}</td><td>${total}</td>${f.counts.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+      }).join('');
+      return `<section class="sourcing"><h3>Field and cropzone sourcing</h3><p class="subtitle">FIELD is the official cropzone. Only records with a complete FIELD value are included.</p><div class="table-scroll"><table><thead><tr><th>Field / cropzone</th><th>Plant names</th><th>Varieties</th><th>Records</th><th>T1</th><th>T2</th><th>T3</th><th>T4</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+    }
+
+    function comparisonSiteGroups() {
+      const site=$('compareSite').value;
+      return {site,groups:state.sites.get(site)||[]};
+    }
+
+    function setupComparison() {
+      const selected=$('siteFilter').value;
+      const sites=[...state.sites.keys()];
+      $('compareSite').innerHTML=sites.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      $('compareSite').value=selected!=='ALL'&&sites.includes(selected)?selected:sites[0];
+      updateComparisonPlants();
+    }
+
+    function updateComparisonPlants() {
+      const {groups}=comparisonSiteGroups();
+      const plants=[...new Set(groups.map(g=>g.plant))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+      $('comparePlant').innerHTML=plants.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      $('comparison').hidden=!plants.length;
+      updateComparisonFields();
+    }
+
+    function updateComparisonFields() {
+      const {groups}=comparisonSiteGroups(), plant=$('comparePlant').value;
+      const fields=[...new Set(groups.filter(g=>g.plant===plant).map(g=>g.field))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+      const previous=$('compareFieldA').value;
+      $('compareFieldA').innerHTML=fields.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      if(fields.includes(previous)) $('compareFieldA').value=previous;
+      updateComparisonTargets();
+    }
+
+    function updateComparisonTargets() {
+      const {groups}=comparisonSiteGroups(), plant=$('comparePlant').value, fieldA=$('compareFieldA').value;
+      const fields=[...new Set(groups.filter(g=>g.plant===plant&&g.field!==fieldA).map(g=>g.field))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+      const previous=$('compareTarget').value;
+      $('compareTarget').innerHTML='<option value="REST">All other fields</option>'+fields.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      $('compareTarget').value=fields.includes(previous)||previous==='REST'?previous:'REST';
+      drawComparison();
+    }
+
+    function drawComparison() {
+      const {site,groups}=comparisonSiteGroups(), plant=$('comparePlant').value, fieldA=$('compareFieldA').value, target=$('compareTarget').value;
+      if(!fieldA) return;
+      const focus=groups.filter(g=>g.plant===plant&&g.field===fieldA);
+      const other=groups.filter(g=>g.plant===plant&&(target==='REST'?g.field!==fieldA:g.field===target));
+      const a=totals(focus), b=totals(other), aTotal=a.reduce((x,y)=>x+y,0), bTotal=b.reduce((x,y)=>x+y,0);
+      const pct=(values,total)=>values.map(v=>total?v*100/total:0);
+      const otherLabel=target==='REST'?'All other fields':target;
+      comparisonChart?.destroy();
+      comparisonChart=new Chart($('compareCanvas'),{type:'bar',data:{labels:[fieldA,otherLabel],datasets:TIERS.map((tier,i)=>({label:`Tier ${tier}`,data:[pct(a,aTotal)[i],pct(b,bTotal)[i]],backgroundColor:COLORS[i]}))},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{title:{display:true,text:`${site} • ${plant}`,font:{size:16}},tooltip:{callbacks:{label:item=>`${item.dataset.label}: ${item.raw.toFixed(1)}%`}}},scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},title:{display:true,text:'Share of Tier records'}}}}});
+      const highA=aTotal?(a[2]+a[3])*100/aTotal:0, highB=bTotal?(b[2]+b[3])*100/bTotal:0, diff=highA-highB;
+      $('compareInsight').textContent=bTotal?`${fieldA} has ${aTotal} records and ${highA.toFixed(1)}% are Tier 3–4. ${otherLabel} has ${bTotal} records and ${highB.toFixed(1)}% are Tier 3–4. The focus-field difference is ${diff>=0?'+':''}${diff.toFixed(1)} percentage points.`:'No comparison records are available for the selected plant and target.';
+    }
+
     function destroyCharts() { charts.forEach(c=>c.destroy()); charts.clear(); }
 
-    function render(selected='ALL') {
+    function filterValues() {
+      return {site:$('siteFilter').value,date:$('dateFilter').value,plant:$('plantFilter').value,field:$('fieldFilter').value,variety:$('varietyFilter').value};
+    }
+
+    function setFilterOptions(id,allLabel,values) {
+      const select=$(id), previous=select.value;
+      select.innerHTML=`<option value="ALL">${allLabel}</option>`+values.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      select.value=values.includes(previous)?previous:'ALL';
+      select.disabled=false;
+    }
+
+    function populateChartFilters(reset=false) {
+      const site=$('siteFilter').value;
+      const groups=[...state.sites.entries()].filter(([name])=>site==='ALL'||name===site).flatMap(([,items])=>items);
+      if(reset) ['dateFilter','plantFilter','fieldFilter','varietyFilter'].forEach(id=>$(id).value='ALL');
+      const unique=(values,sorted=true)=>{const result=[...new Set(values)]; return sorted?result.sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})):result;};
+      const dates=unique(groups.map(g=>formatDate(g.rawDate)),false);
+      setFilterOptions('dateFilter','All delivery dates',dates);
+      if(reset&&dates.length) $('dateFilter').value=dates.at(-1);
+      setFilterOptions('plantFilter','All plants',unique(groups.map(g=>g.plant)));
+      setFilterOptions('fieldFilter','All fields',unique(groups.map(g=>g.field)));
+      setFilterOptions('varietyFilter','All varieties',unique(groups.map(g=>g.variety)));
+    }
+
+    function render() {
       destroyCharts();
       const root=$('charts'); root.innerHTML='';
-      const entries=[...state.sites.entries()].filter(([site])=>selected==='ALL'||site===selected);
+      const filters=filterValues();
+      const entries=[...state.sites.entries()].filter(([site])=>filters.site==='ALL'||site===filters.site);
       for (const [site,groups] of entries) {
         // Final defensive filter: placeholder variety groups can never reach a chart.
-        const chartGroups=groups.filter(g=>!isUnavailableAxisValue(g.variety));
+        const chartGroups=groups.filter(g=>!isUnavailableAxisValue(g.variety) &&
+          (filters.date==='ALL'||formatDate(g.rawDate)===filters.date) &&
+          (filters.plant==='ALL'||g.plant===filters.plant) &&
+          (filters.field==='ALL'||g.field===filters.field) &&
+          (filters.variety==='ALL'||g.variety===filters.variety));
         if (!chartGroups.length) continue;
         const siteTotals=totals(chartGroups), total=siteTotals.reduce((a,b)=>a+b,0);
         const summary=summarySentences(site);
         const card=document.createElement('article'); card.className='card';
         const pages=chunk(chartGroups,SCREEN_PAGE_SIZE);
-        card.innerHTML=`<div class="card-head"><div><h2>${escapeHtml(site)}</h2><p class="subtitle">${total} valid tier records across ${chartGroups.length} date / plant / field / variety groups</p><p class="site-summary"><span>${escapeHtml(summary[0])}</span><span>${escapeHtml(summary[1])}</span></p></div><div class="download-group"><button class="download full-download">Download visible page PNG</button><button class="download primary email-download">Download email-ready ZIP</button></div></div><div class="scroll"><div class="canvas-wrap"><canvas></canvas></div></div><div class="pager"><button class="page-prev">Previous</button><span class="page-status"></span><button class="page-next">Next</button></div>`;
+        card.innerHTML=`<div class="card-head"><div><h2>${escapeHtml(site)}</h2><p class="subtitle">${total} valid tier records across ${chartGroups.length} plant / field / variety groups for ${escapeHtml(filters.date==='ALL'?'all delivery dates':filters.date)}</p><p class="site-summary"><span>${escapeHtml(summary[0])}</span><span>${escapeHtml(summary[1])}</span></p></div><div class="download-group"><button class="download full-download">Download visible page PNG</button><button class="download primary email-download">Download email-ready ZIP</button></div></div>${sourcingHtml(chartGroups)}<div class="scroll"><div class="canvas-wrap"><canvas></canvas></div></div><div class="pager"><button class="page-prev">Previous</button><span class="page-status"></span><button class="page-next">Next</button></div>`;
         root.appendChild(card);
         const canvas=card.querySelector('canvas');
-        const prev=card.querySelector('.page-prev'), next=card.querySelector('.page-next'), pageStatus=card.querySelector('.page-status');
+        const pager=card.querySelector('.pager'), prev=card.querySelector('.page-prev'), next=card.querySelector('.page-next'), pageStatus=card.querySelector('.page-status');
+        pager.hidden=pages.length===1;
         let pageIndex=0;
         const drawPage=()=>{
           charts.get(site)?.destroy();
           const pageGroups=pages[pageIndex];
           const maxValue=Math.max(1,...pageGroups.flatMap(g=>g.counts));
-          const chart=new Chart(canvas,{type:'bar',data:{labels:pageGroups.map(g=>g.label),datasets:TIERS.map((tier,i)=>({label:`Tier ${tier}`,data:pageGroups.map(g=>g.counts[i]),backgroundColor:COLORS[i],borderColor:'#fff',borderWidth:1,borderRadius:2,barPercentage:.86,categoryPercentage:.82}))},options:{responsive:true,maintainAspectRatio:false,animation:false,layout:{padding:{top:20,right:12}},plugins:{title:{display:true,text:`Tier Score Distribution — ${site}`,color:'#172b3a',font:{size:18,weight:'bold'},padding:{bottom:6}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:10},padding:{bottom:10}},legend:{position:'top',align:'start',labels:{usePointStyle:true,pointStyle:'rectRounded',boxWidth:12,padding:18,color:'#334851',font:{weight:'600'}}},tooltip:{callbacks:{title:items=>{const g=pageGroups[items[0].dataIndex]; return [`Date: ${g.label[0]}`,`Plant: ${g.plant}`,`Field: ${g.field}`,`Variety: ${g.variety}`];},label:item=>`${item.dataset.label}: ${item.raw}`}}},scales:{y:{beginAtZero:true,suggestedMax:maxValue+1,ticks:{precision:0,stepSize:1,color:'#607781'},title:{display:true,text:'Number of records',color:'#405660',font:{weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},border:{color:'#b8c6cc'},title:{display:true,text:'Scheduled delivery date • Plant name • Field • Variety',color:'#607781',font:{weight:'600'}}}}},plugins:[whiteBackground,valueLabels]});
+          const chart=new Chart(canvas,{type:'bar',data:{labels:pageGroups.map(g=>g.label),datasets:TIERS.map((tier,i)=>({label:`Tier ${tier}`,data:pageGroups.map(g=>g.counts[i]),backgroundColor:COLORS[i],borderColor:'#fff',borderWidth:1,borderRadius:2,barPercentage:.86,categoryPercentage:.82}))},options:{responsive:true,maintainAspectRatio:false,animation:false,layout:{padding:{top:20,right:12}},plugins:{title:{display:true,text:`Tier Score Distribution — ${site}`,color:'#172b3a',font:{size:18,weight:'bold'},padding:{bottom:6}},subtitle:{display:true,text:summary,color:'#4e636e',font:{size:10},padding:{bottom:10}},legend:{position:'top',align:'start',labels:{usePointStyle:true,pointStyle:'rectRounded',boxWidth:12,padding:18,color:'#334851',font:{weight:'600'}}},tooltip:{callbacks:{title:items=>{const g=pageGroups[items[0].dataIndex]; return [`Date: ${formatDate(g.rawDate)}`,`Plant: ${g.plant}`,`Field: ${g.field}`,`Variety: ${g.variety}`];},label:item=>`${item.dataset.label}: ${item.raw}`}}},scales:{y:{beginAtZero:true,suggestedMax:maxValue+1,ticks:{precision:0,stepSize:1,color:'#607781'},title:{display:true,text:'Number of records',color:'#405660',font:{weight:'600'}},grid:{color:'#e4eaed'},border:{display:false}},x:{ticks:{color:'#405660',maxRotation:0,autoSkip:false,font:{size:10}},grid:{display:false},border:{color:'#b8c6cc'},title:{display:true,text:'Scheduled delivery date • Plant name • Field / cropzone • Variety',color:'#607781',font:{weight:'600'}}}}},plugins:[whiteBackground,valueLabels]});
           charts.set(site,chart);
           prev.disabled=pageIndex===0; next.disabled=pageIndex===pages.length-1;
           const first=pageIndex*SCREEN_PAGE_SIZE+1, last=Math.min((pageIndex+1)*SCREEN_PAGE_SIZE,chartGroups.length);
@@ -344,6 +470,7 @@
           catch(error) { console.error(error); alert(error.message); e.currentTarget.disabled=false; }
         });
       }
+      if(!root.children.length) root.innerHTML='<div class="panel empty">No Tier Score groups match the selected filters.</div>';
     }
 
     function renderAudit() {
@@ -356,7 +483,7 @@
 
     function renderMetrics(d,sheetName) {
       const skipped=d.invalidTier+d.blankSite+d.blankAxis;
-      $('metrics').innerHTML=`<div class="metric"><b>${d.sourceRows}</b><span>Source rows</span></div><div class="metric"><b>${d.valid}</b><span>Charted complete Tier 1–4 rows</span></div><div class="metric"><b>${state.sites.size}</b><span>Supplier sites</span></div><div class="metric"><b>${skipped}</b><span class="warning">Skipped (${d.invalidTier} blank/invalid tier, ${d.blankSite} blank site, ${d.blankAxis} blank date/plant/field/variety)</span></div><div class="metric"><b>${escapeHtml(sheetName)}</b><span>Source worksheet</span></div>`;
+      $('metrics').innerHTML=`<div class="metric"><b>${d.sourceRows}</b><span>Source rows</span></div><div class="metric"><b>${d.valid}</b><span>Charted complete Tier 1–4 rows</span></div><div class="metric"><b>${state.sites.size}</b><span>Supplier sites</span></div><div class="metric"><b>${skipped}</b><span class="warning">Skipped (${d.invalidTier} blank/invalid tier, ${d.blankSite} blank site, ${d.blankAxis} blank plant/field/variety)</span></div><div class="metric"><b>${escapeHtml(sheetName)}</b><span>Source worksheet</span></div>`;
       $('metrics').hidden=false;
     }
 
@@ -379,7 +506,7 @@
         const filter=$('siteFilter');
         filter.innerHTML='<option value="ALL">All supplier sites</option>'+[...state.sites.keys()].map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
         filter.disabled=false; $('csvButton').disabled=false;
-        renderMetrics(state.diagnostics,source.name); renderAudit(); render();
+        populateChartFilters(true); renderMetrics(state.diagnostics,source.name); renderAudit(); render(); setupComparison();
         $('status').textContent=`Latest published data loaded from ${fileName}. Generated ${state.sites.size} Supplier Site charts.`;
       } catch(error) {
         console.error(error); $('status').textContent=`Error: ${error.message}`;
@@ -400,7 +527,12 @@
         console.error(error); $('status').textContent='The published workbook could not be loaded. You can still choose an Excel file manually.';
       }
     }
-    $('siteFilter').addEventListener('change',e=>render(e.target.value));
+    $('siteFilter').addEventListener('change',()=>{populateChartFilters(true);render();setupComparison();});
+    ['dateFilter','plantFilter','fieldFilter','varietyFilter'].forEach(id=>$(id).addEventListener('change',render));
+    $('compareSite').addEventListener('change',updateComparisonPlants);
+    $('comparePlant').addEventListener('change',updateComparisonFields);
+    $('compareFieldA').addEventListener('change',updateComparisonTargets);
+    $('compareTarget').addEventListener('change',drawComparison);
     $('csvButton').addEventListener('click',downloadAuditCsv);
     window.addEventListener('DOMContentLoaded',loadPublishedWorkbook);
   </script>
