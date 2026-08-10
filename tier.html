@@ -78,7 +78,7 @@
 <body>
   <header>
     <h1>Tier Score Distribution</h1>
-    <p>Tier counts by delivery date, plant, field/cropzone, and variety • Corrected Dashboard v8</p>
+    <p>Tier counts by delivery date, plant, field/cropzone, and variety • Corrected Dashboard v9</p>
   </header>
   <main>
     <section class="panel">
@@ -282,6 +282,30 @@
       }
     };
 
+    const comparisonSegmentLabels = {
+      id:'comparisonSegmentLabels',
+      afterDatasetsDraw(chart) {
+        const {ctx}=chart;
+        ctx.save();
+        ctx.textAlign='center';
+        ctx.textBaseline='middle';
+        chart.data.datasets.forEach((dataset,datasetIndex)=>{
+          if(!dataset.rawCounts) return;
+          const meta=chart.getDatasetMeta(datasetIndex);
+          meta.data.forEach((segment,index)=>{
+            const count=Number(dataset.rawCounts[index]||0);
+            const percentage=Number(dataset.data[index]||0);
+            if(count<=0||percentage<=0) return;
+            const height=Math.abs(segment.base-segment.y);
+            ctx.fillStyle=dataset.labelColor||'#ffffff';
+            ctx.font=`800 ${height<25?10:12}px Segoe UI, Arial`;
+            ctx.fillText(`${count} • ${percentage.toFixed(1)}%`,segment.x,(segment.y+segment.base)/2);
+          });
+        });
+        ctx.restore();
+      }
+    };
+
     const whiteBackground = {
       id:'whiteBackground',
       beforeDraw(chart) {
@@ -395,7 +419,33 @@
       const pct=(values,total)=>values.map(v=>total?v*100/total:0);
       const otherLabel=target==='REST'?'All other fields':target;
       comparisonChart?.destroy();
-      comparisonChart=new Chart($('compareCanvas'),{type:'bar',data:{labels:[fieldA,otherLabel],datasets:TIERS.map((tier,i)=>({label:`Tier ${tier}`,data:[pct(a,aTotal)[i],pct(b,bTotal)[i]],backgroundColor:COLORS[i]}))},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{title:{display:true,text:`${site} • ${plant}`,font:{size:16}},tooltip:{callbacks:{label:item=>`${item.dataset.label}: ${item.raw.toFixed(1)}%`}}},scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},title:{display:true,text:'Share of Tier records'}}}}});
+      comparisonChart=new Chart($('compareCanvas'),{
+        type:'bar',
+        data:{
+          labels:[fieldA,otherLabel],
+          datasets:TIERS.map((tier,i)=>({
+            label:`Tier ${tier}`,
+            data:[pct(a,aTotal)[i],pct(b,bTotal)[i]],
+            rawCounts:[a[i],b[i]],
+            backgroundColor:COLORS[i],
+            labelColor:i===2?'#172b3a':'#ffffff'
+          }))
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          animation:false,
+          plugins:{
+            title:{display:true,text:`${site} • ${plant}`,font:{size:16}},
+            tooltip:{callbacks:{label:item=>`${item.dataset.label}: ${item.dataset.rawCounts[item.dataIndex]} records • ${item.raw.toFixed(1)}%`}}
+          },
+          scales:{
+            x:{stacked:true,grid:{display:false}},
+            y:{stacked:true,beginAtZero:true,max:100,ticks:{callback:v=>v+'%'},title:{display:true,text:'Share of Tier records'}}
+          }
+        },
+        plugins:[comparisonSegmentLabels]
+      });
       const highA=aTotal?(a[2]+a[3])*100/aTotal:0, highB=bTotal?(b[2]+b[3])*100/bTotal:0, diff=highA-highB;
       $('compareInsight').textContent=bTotal?`${fieldA} has ${aTotal} records and ${highA.toFixed(1)}% are Tier 3–4. ${otherLabel} has ${bTotal} records and ${highB.toFixed(1)}% are Tier 3–4. The focus-field difference is ${diff>=0?'+':''}${diff.toFixed(1)} percentage points.`:'No comparison records are available for the selected plant and target.';
     }
