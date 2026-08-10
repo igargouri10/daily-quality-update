@@ -78,7 +78,7 @@
 <body>
   <header>
     <h1>Tier Score Distribution</h1>
-    <p>Tier counts by delivery date, plant, field/cropzone, and variety • Corrected Dashboard v9</p>
+    <p>Tier counts by delivery date, plant, field/cropzone, and variety • Corrected Dashboard v10</p>
   </header>
   <main>
     <section class="panel">
@@ -87,7 +87,7 @@
         <input id="excelFile" type="file" accept=".xlsx,.xls,.xlsm">
         <span class="filter-title">Chart filters</span>
         <label class="filter-control">Supplier Site<select id="siteFilter" aria-label="Filter supplier site" disabled><option>All supplier sites</option></select></label>
-        <label class="filter-control">Delivery Date<select id="dateFilter" aria-label="Filter scheduled delivery date" disabled><option>Latest delivery date</option></select></label>
+        <label class="filter-control">Delivery Date<select id="dateFilter" aria-label="Filter scheduled delivery date" disabled><option>All delivery dates</option></select></label>
         <label class="filter-control">Plant Name<select id="plantFilter" aria-label="Filter plant name" disabled><option>All plants</option></select></label>
         <label class="filter-control">Field / Cropzone<select id="fieldFilter" aria-label="Filter field" disabled><option>All fields</option></select></label>
         <label class="filter-control">Variety<select id="varietyFilter" aria-label="Filter variety" disabled><option>All varieties</option></select></label>
@@ -470,7 +470,6 @@
       const unique=(values,sorted=true)=>{const result=[...new Set(values)]; return sorted?result.sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})):result;};
       const dates=unique(groups.map(g=>formatDate(g.rawDate)),false);
       setFilterOptions('dateFilter','All delivery dates',dates);
-      if(reset&&dates.length) $('dateFilter').value=dates.at(-1);
       setFilterOptions('plantFilter','All plants',unique(groups.map(g=>g.plant)));
       setFilterOptions('fieldFilter','All fields',unique(groups.map(g=>g.field)));
       setFilterOptions('varietyFilter','All varieties',unique(groups.map(g=>g.variety)));
